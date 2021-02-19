@@ -1,0 +1,8 @@
+{
+  "cSpell.userWords": [], // only use words from .cspell.json
+  "cSpell.enabled": true,
+  "editor.formatOnSave": true,
+	"solidity.compileUsingRemoteVersion": "v0.8.1+commit.df193b15",
+	"solidity.packageDefaultDependenciesContractsDirectory": "",
+	"solidity.packageDefaultDependenciesDirectory": "node_modules"
+}
