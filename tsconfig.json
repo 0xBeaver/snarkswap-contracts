@@ -1,8 +1,13 @@
 {
   "compilerOptions": {
+    "target": "es2020",
+    "lib": ["es2020", "DOM"],
     "moduleResolution": "node",
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowJs": true,
-  }
+    "types": ["node"],
+    "typeRoots": ["node_modules/@types", "src/types"]
+  },
+  "compileOnSave": true
 }
