@@ -37,9 +37,6 @@ export default {
       mining: {
         auto: true,
       },
-      forking: {
-        url: process.env.JSON_RPC_URL,
-      },
     },
   },
 };
