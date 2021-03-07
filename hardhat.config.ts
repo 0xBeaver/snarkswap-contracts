@@ -22,15 +22,21 @@ task("accounts", "Prints the list of accounts", async (args, hre) => {
 export default {
   solidity: {
     version: "0.8.1",
-     settings: {
+    settings: {
       optimizer: {
         enabled: true,
-        runs: 1000
-      }
-    }
+        runs: 999999,
+      },
+    },
   },
   networks: {
     hardhat: {
+      hardfork: "istanbul",
+      mnemonic: "horn horn horn horn horn horn horn horn horn horn horn horn",
+      gasLimit: 9999999,
+      mining: {
+        auto: true,
+      },
       forking: {
         url: process.env.JSON_RPC_URL,
       },

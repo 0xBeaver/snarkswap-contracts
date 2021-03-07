@@ -36,14 +36,27 @@ contract Sandglass is ControlledByPair {
 
     ImmutableConfig public config;
 
-    constructor(
+    constructor() {
+    }
+
+    function initialize(
         address factory,
         address stakingToken,
         uint256 difficultyPrice,
         uint256 maxDifficulty,
         uint256 freeDifficulty,
         uint256 preferentialPeriod
-    ) {
+    ) public {
+        require(
+            (config.factory == address(0) &&
+                config.stakingToken == address(0)) &&
+                (config.difficultyPrice |
+                    config.maxDifficulty |
+                    config.freeDifficulty |
+                    config.preferentialPeriod ==
+                    0),
+            "already initialized"
+        );
         config.factory = factory;
         config.stakingToken = stakingToken;
         config.difficultyPrice = difficultyPrice;

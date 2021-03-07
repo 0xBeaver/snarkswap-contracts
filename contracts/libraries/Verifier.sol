@@ -4,7 +4,7 @@ pragma experimental ABIEncoderV2;
 
 import {Pairing} from "./Pairing.sol";
 
-struct VK {
+struct VerifyingKey {
     Pairing.G1Point alpha1;
     Pairing.G2Point beta2;
     Pairing.G2Point gamma2;
@@ -27,7 +27,7 @@ library Verifier {
         21888242871839275222246405745257275088696311157297823662689037894645226208583;
 
     function verify(
-        VK memory vk,
+        VerifyingKey memory vk,
         uint256[] memory input,
         Proof memory proof
     ) internal view returns (bool) {

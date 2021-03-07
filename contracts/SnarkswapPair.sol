@@ -14,32 +14,25 @@ import {
 import {IERC20} from "@openzeppelin/contracts/contracts/token/ERC20/IERC20.sol";
 import {INotePool} from "./interfaces/INotePool.sol";
 import {ISandglass} from "./interfaces/ISandglass.sol";
-import {Verifier, VK, Proof} from "./libraries/Verifier.sol";
+import {Proof} from "./libraries/Verifier.sol";
 import {SwapVerifier} from "./verifiers/SwapVerifier.sol";
 import {ISwapVerifier, SnarkSwap} from "./interfaces/ISwapVerifier.sol";
-import {Constant as C} from "./libraries/Constant.sol";
-import {Undarkener} from "./libraries/Undarkener.sol";
+import {IUndarkener} from "./interfaces/IUndarkener.sol";
+import {PairConfig} from "./interfaces/ISnarkswapPair.sol";
 
 contract SnarkswapPair is UniswapV2Pair {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
-    using Verifier for VK;
 
     bytes32 public darkness;
     address public darkener;
     uint256 public darkenedAt;
 
-    struct ImmutableConfig {
-        address sandglass;
-        address swapVerifier;
-        address notePool;
-    }
+    PairConfig public config;
 
-    ImmutableConfig public config;
-
-    uint256 private constant MAX_DIFFICULTY = 30; // mestimated: 9 hours
-    uint8 private constant FEE_NUMERATOR = 3; // mestimated: 9 hours
-    uint16 private constant FEE_DENOMINATOR = 1000; // mestimated: 9 hours
+    uint256 private constant MAX_DIFFICULTY = 30; // estimated: 9 hours
+    uint8 private constant FEE_NUMERATOR = 3; // 
+    uint16 private constant FEE_DENOMINATOR = 1000; //
 
     event Darkened(bytes32 darkness, uint224 mask);
     event Undarkened(bytes32 darkness, uint112 reserve0, uint112 reserve1);
@@ -49,17 +42,11 @@ contract SnarkswapPair is UniswapV2Pair {
         _;
     }
 
-    constructor() UniswapV2Pair() {
-    }
+    constructor() UniswapV2Pair() {}
 
-    function initialize2(
-        address sandglass,
-        address swapVerifier,
-        address notePool
-    ) public {
-        config.sandglass = sandglass;
-        config.swapVerifier = swapVerifier;
-        config.notePool = notePool;
+    function initialize2(PairConfig memory _config) public {
+        require(msg.sender == factory);
+        config = _config;
     }
 
     /**
@@ -142,7 +129,7 @@ contract SnarkswapPair is UniswapV2Pair {
         uint128 salt
     ) public {
         bool solved =
-            Undarkener.solve(
+            IUndarkener(config.undarkener).solve(
                 darkness,
                 reserve0,
                 reserve1,
@@ -176,7 +163,11 @@ contract SnarkswapPair is UniswapV2Pair {
                 : uint256(reserve1).sub(uint256(_reserve1));
         uint256 amountIn = amountInWithFee.mul(1000).div(997);
         // Run the pending swap.
-        IERC20(inputToken).safeTransferFrom(config.notePool, address(this), amountIn);
+        IERC20(inputToken).safeTransferFrom(
+            config.notePool,
+            address(this),
+            amountIn
+        );
         this.swap(amount0Out, amount1Out, config.notePool, new bytes(0));
     }
 

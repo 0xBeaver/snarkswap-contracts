@@ -24,7 +24,13 @@ contract NotePool is ControlledByPair {
 
     ImmutableConfig public config;
 
-    constructor(address factory, address eddsaVerifier) {
+    constructor() {}
+
+    function initialize(address factory, address eddsaVerifier) public {
+        require(
+            config.factory == address(0) && config.eddsaVerifier == address(0),
+            "already initialized"
+        );
         config.factory = factory;
         config.eddsaVerifier = eddsaVerifier;
     }

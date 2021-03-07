@@ -1,3 +1,4 @@
+import { network } from 'hardhat'
 import { Contract, providers, utils, BigNumber } from 'ethers'
 
 const {
@@ -16,7 +17,7 @@ export function expandTo18Decimals(n: number): BigNumber {
   return BigNumber.from(n).mul(BigNumber.from(10).pow(18))
 }
 
-function getDomainSeparator(name: string, tokenAddress: string) {
+export function getDomainSeparator(name: string, tokenAddress: string, chainId: number) {
   return keccak256(
     defaultAbiCoder.encode(
       ['bytes32', 'bytes32', 'bytes32', 'uint256', 'address'],
@@ -24,7 +25,7 @@ function getDomainSeparator(name: string, tokenAddress: string) {
         keccak256(toUtf8Bytes('EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)')),
         keccak256(toUtf8Bytes(name)),
         keccak256(toUtf8Bytes('1')),
-        1,
+        chainId,
         tokenAddress
       ]
     )
@@ -55,10 +56,11 @@ export async function getApprovalDigest(
     value: BigNumber
   },
   nonce: BigNumber,
-  deadline: BigNumber
+  deadline: BigNumber,
+  chainId: number
 ): Promise<string> {
   const name = await token.name()
-  const DOMAIN_SEPARATOR = getDomainSeparator(name, token.address)
+  const DOMAIN_SEPARATOR = getDomainSeparator(name, token.address, chainId)
   return keccak256(
     solidityPack(
       ['bytes1', 'bytes1', 'bytes32', 'bytes32'],
@@ -77,19 +79,8 @@ export async function getApprovalDigest(
   )
 }
 
-export async function mineBlock(provider: providers.Web3Provider, timestamp: number): Promise<void> {
-  await new Promise(async (resolve, reject) => {
-    ;(provider.provider.sendAsync as any)(
-      { jsonrpc: '2.0', method: 'evm_mine', params: [timestamp] },
-      (error: any, result: any): void => {
-        if (error) {
-          reject(error)
-        } else {
-          resolve(result)
-        }
-      }
-    )
-  })
+export async function mineBlock(timestamp: number): Promise<void> {
+  await network.provider.send('evm_mine', [timestamp])
 }
 
 export function encodePrice(reserve0: BigNumber, reserve1: BigNumber) {

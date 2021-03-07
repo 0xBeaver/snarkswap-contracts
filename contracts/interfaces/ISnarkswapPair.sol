@@ -5,10 +5,13 @@ import {
     IUniswapV2Pair
 } from "@0xBeaver/uniswap-v2-core/contracts/interfaces/IUniswapV2Pair.sol";
 
+struct PairConfig {
+    address sandglass;
+    address undarkener;
+    address swapVerifier;
+    address notePool;
+}
+
 interface ISnarkswapPair is IUniswapV2Pair {
-    function initialize2(
-        address sandglass,
-        address swapVerifier,
-        address notePool
-    ) external;
+    function initialize2(PairConfig memory config) external;
 }

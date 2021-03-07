@@ -1,46 +1,122 @@
-import { Contract, Wallet, providers } from 'ethers'
 import { ethers } from "hardhat";
-import { deployContract } from 'ethereum-waffle'
+import { Contract, Signer } from "ethers";
+import poseidonGenContract from "circomlib/src/poseidon_gencontract";
 
-import { expandTo18Decimals } from './utilities'
+const poseidonGenContract = require("circomlib/src/poseidon_gencontract");
 
-// import ERC20 from '../../artifacts/contracts/ERC20.json'
-// import UniswapV2Factory from '../../build/UniswapV2Factory.json'
-// import UniswapV2Pair from '../../build/UniswapV2Pair.json'
+import { expandTo18Decimals } from "./utilities";
 
-interface FactoryFixture {
-  factory: Contract
+import HRatioHashJson from "../../artifacts/contracts/hash/HRatioHash.sol/HRatioHash.json";
+import NoteHashJson from "../../artifacts/contracts/hash/NoteHash.sol/NoteHash.json";
+
+interface GadgetFixture {
+  hRatioHash: Contract;
+  noteHash: Contract;
+  undarkener: Contract;
+  swapVerifier: Contract;
+  eddsaVerifier: Contract;
+  stakingToken: Contract;
 }
 
-const overrides = {
-  gasLimit: 9999999
-}
-
-export async function factoryFixture(_: providers.Web3Provider, [wallet]: Wallet[]): Promise<FactoryFixture> {
-  const univ2Factory = await ethers.getContractFactory("UniswapV2Factory");
-  const factory = await deployContract(wallet, UniswapV2Factory, [wallet.address], overrides)
-  return { factory }
+interface FactoryFixture extends GadgetFixture {
+  factory: Contract;
+  sandglass: Contract;
+  notePool: Contract;
 }
 
 interface PairFixture extends FactoryFixture {
-  token0: Contract
-  token1: Contract
-  pair: Contract
+  token0: Contract;
+  token1: Contract;
+  pair: Contract;
 }
 
-export async function pairFixture(provider: providers.Web3Provider, [wallet]: Wallet[]): Promise<PairFixture> {
-  const { factory } = await factoryFixture(provider, [wallet])
+export async function gadgetFixture(signer: Signer): Promise<GadgetFixture> {
+  const ERC20Tester = await ethers.getContractFactory("ERC20Tester");
+  const HRatioHash = await ethers.getContractFactory(
+    HRatioHashJson.abi,
+    poseidonGenContract.createCode(3)
+  );
+  const NoteHash = await ethers.getContractFactory(
+    NoteHashJson.abi,
+    poseidonGenContract.createCode(5)
+  );
+  const hRatioHash = await HRatioHash.deploy();
+  const noteHash = await NoteHash.deploy();
+  const Undarkener = (
+    await ethers.getContractFactory("Undarkener", {
+      libraries: {
+        HRatioHash: hRatioHash.address,
+      },
+    })
+  ).connect(signer);
+  const SwapVerifier = await ethers.getContractFactory("SwapVerifier");
+  const EdDSAVerifier = await ethers.getContractFactory("EdDSAVerifier");
+  const stakingToken = await (
+    await ERC20Tester.deploy(expandTo18Decimals(10000))
+  ).connect(signer);
+  const undarkener = await Undarkener.deploy();
+  const swapVerifier = await SwapVerifier.deploy();
+  const eddsaVerifier = await EdDSAVerifier.deploy();
+  return {
+    noteHash,
+    hRatioHash,
+    undarkener,
+    swapVerifier,
+    eddsaVerifier,
+    stakingToken,
+  };
+}
 
-  const tokenA = await deployContract(wallet, ERC20, [expandTo18Decimals(10000)], overrides)
-  const tokenB = await deployContract(wallet, ERC20, [expandTo18Decimals(10000)], overrides)
+export async function factoryFixture(signer: Signer): Promise<FactoryFixture> {
+  const fixture = await gadgetFixture(signer);
+  const SnarkswapFactory = (
+    await ethers.getContractFactory("SnarkswapFactory")
+  ).connect(signer);
+  const NotePool = (
+    await ethers.getContractFactory("NotePool", {
+      libraries: {
+        NoteHash: fixture.noteHash.address,
+      },
+    })
+  ).connect(signer);
+  const Sandglass = (await ethers.getContractFactory("Sandglass")).connect(
+    signer
+  );
+  const sandglass = await Sandglass.deploy();
+  const notePool = await NotePool.deploy();
+  const factory = await SnarkswapFactory.deploy(
+    sandglass.address,
+    fixture.undarkener.address,
+    fixture.swapVerifier.address,
+    notePool.address,
+    await signer.getAddress()
+  );
+  await notePool.initialize(factory.address, fixture.eddsaVerifier.address);
+  await sandglass.initialize(
+    factory.address,
+    fixture.stakingToken.address,
+    10,
+    30,
+    20,
+    600
+  );
+  return { factory, sandglass, notePool, ...fixture };
+}
 
-  await factory.createPair(tokenA.address, tokenB.address, overrides)
-  const pairAddress = await factory.getPair(tokenA.address, tokenB.address)
-  const pair = new Contract(pairAddress, JSON.stringify(UniswapV2Pair.abi), provider).connect(wallet)
+export async function pairFixture(signer: Signer): Promise<PairFixture> {
+  const ERC20Tester = await ethers.getContractFactory("ERC20Tester");
+  const fixture = await factoryFixture(signer);
+  const tokenA = await ERC20Tester.deploy(expandTo18Decimals(10000));
+  const tokenB = await ERC20Tester.deploy(expandTo18Decimals(10000));
+  await fixture.factory.createPair(tokenA.address, tokenB.address);
+  const pairAddress = await fixture.factory.getPair(
+    tokenA.address,
+    tokenB.address
+  );
+  const pair = await ethers.getContractAt("SnarkswapPair", pairAddress, signer);
+  const token0Address = await pair.token0();
+  const token0 = tokenA.address === token0Address ? tokenA : tokenB;
+  const token1 = tokenA.address === token0Address ? tokenB : tokenA;
 
-  const token0Address = (await pair.token0()).address
-  const token0 = tokenA.address === token0Address ? tokenA : tokenB
-  const token1 = tokenA.address === token0Address ? tokenB : tokenA
-
-  return { factory, token0, token1, pair }
+  return { token0, token1, pair, ...fixture };
 }
