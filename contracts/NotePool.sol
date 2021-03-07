@@ -24,6 +24,23 @@ contract NotePool is ControlledByPair {
 
     ImmutableConfig public config;
 
+    event Deposit(
+        address indexed depositor,
+        uint256 noteHash,
+        address token,
+        uint256 amount,
+        bytes32 eddsaId,
+        uint128 salt
+    );
+    event Withdraw(
+        address indexed depositor,
+        uint256 noteHash,
+        address token,
+        uint256 amount,
+        bytes32 eddsaId,
+        uint128 salt
+    );
+
     constructor() {}
 
     function initialize(address factory, address eddsaVerifier) public {
@@ -68,6 +85,9 @@ contract NotePool is ControlledByPair {
         require(!notes[noteHash], "output already exists");
         notes[noteHash] = true;
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        bytes32 eddsaId =
+            keccak256(abi.encodePacked(edDSAPubKey[0], edDSAPubKey[1]));
+        emit Deposit(msg.sender, noteHash, token, amount, eddsaId, salt);
     }
 
     // EdDSA sig for withdrawal uses keccak256 for its hash function while
@@ -103,5 +123,8 @@ contract NotePool is ControlledByPair {
             "Invalid EdDSA signature"
         );
         IERC20(token).safeTransfer(to, amount);
+        bytes32 eddsaId =
+            keccak256(abi.encodePacked(edDSAPubKey[0], edDSAPubKey[1]));
+        emit Withdraw(msg.sender, noteHash, token, amount, eddsaId, salt);
     }
 }
