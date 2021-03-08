@@ -2,9 +2,9 @@
 # yarn lockfile v1
 
 
-"@0xBeaver/uniswap-v2-core@github:0xBeaver/uniswap-v2-core#v1.0.1-0xBeaver-fork-2":
+"@0xBeaver/uniswap-v2-core@github:0xBeaver/uniswap-v2-core#99ffff7":
   version "1.0.1-0xBeaver-fork-1"
-  resolved "https://codeload.github.com/0xBeaver/uniswap-v2-core/tar.gz/cfbd7f486b93ab8809df44dc3d30b0f8c1c14741"
+  resolved "https://codeload.github.com/0xBeaver/uniswap-v2-core/tar.gz/99ffff774f8e282ac7236c4aabeab778f4c8cb11"
 
 "@ensdomains/ens@^0.4.4":
   version "0.4.5"

@@ -11,7 +11,6 @@ import {
   defaultAbiCoder,
 } from "ethers/lib/utils";
 import { utils, Note, getNoteHash, eddsa } from "@snarkswap/client";
-import { parse } from "path";
 
 chai.use(solidity);
 
@@ -20,7 +19,6 @@ describe("NotePool", async () => {
   let walletAddress: string;
   let notePool: Contract;
   let token0: Contract;
-  let token1: Contract;
   let pair: Contract;
   let privKey: BigNumber;
   let pubKey: readonly BigNumber[];
@@ -30,12 +28,10 @@ describe("NotePool", async () => {
     const fixture = await pairFixture(wallet);
     notePool = fixture.notePool;
     token0 = fixture.token0;
-    token1 = fixture.token1;
     pair = fixture.pair;
     privKey = await utils.genEdDSAPrivKey(pair.address, wallet);
     pubKey = utils.privToPubKey(privKey);
     await token0.approve(notePool.address, constants.MaxUint256);
-    await token0.approve(pair.address, constants.MaxUint256);
   });
 
   it("deposit", async () => {

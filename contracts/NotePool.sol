@@ -52,6 +52,19 @@ contract NotePool is ControlledByPair {
         config.eddsaVerifier = eddsaVerifier;
     }
 
+    function approvePair(
+        address token0,
+        address token1,
+        address pair
+    ) public {
+        require(
+            msg.sender == config.factory,
+            "only factory created pool allowed"
+        );
+        IERC20(token0).approve(pair, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        IERC20(token1).approve(pair, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+    }
+
     function update(
         uint256 sourceX,
         uint256 sourceY,

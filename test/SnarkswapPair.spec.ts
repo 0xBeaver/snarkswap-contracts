@@ -1,66 +1,44 @@
 import { ethers, waffle } from "hardhat";
 import chai, { expect } from "chai";
 import { Contract, constants, BigNumber, Signer } from "ethers";
+import { parseEther, randomBytes, hexlify } from "ethers/lib/utils";
+import { utils, Note, getNoteHash, swap, pow } from "@snarkswap/client";
 
-import { expandTo18Decimals, mineBlock, encodePrice } from "./shared/utilities";
+import { expandTo18Decimals } from "./shared/utilities";
 import { pairFixture } from "./shared/fixtures";
-
-const MINIMUM_LIQUIDITY = BigNumber.from(10).pow(3);
+import { SwapType } from "@snarkswap/client/build/main/lib/swap";
 
 chai.use(waffle.solidity);
 
 const { AddressZero } = constants;
-const provider = waffle.provider;
+const provider = ethers.provider;
 
 describe("SnarkswapPair", () => {
   let wallet: Signer, other: Signer;
   let walletAddress: string;
-  let otherAddress: string;
-  let factory: Contract;
   let token0: Contract;
   let token1: Contract;
+  let stakingToken: Contract;
+  let sandglass: Contract;
   let pair: Contract;
+  let notePool: Contract;
+  let privKey: BigNumber;
+  let pubKey: readonly BigNumber[];
   beforeEach(async () => {
     [wallet, other] = await ethers.getSigners();
     walletAddress = await wallet.getAddress();
-    otherAddress = await other.getAddress();
     const fixture = await pairFixture(wallet);
-    factory = fixture.factory;
+    notePool = fixture.notePool;
     token0 = fixture.token0;
     token1 = fixture.token1;
     pair = fixture.pair;
-  });
-
-  it("mint", async () => {
-    const token0Amount = expandTo18Decimals(1);
-    const token1Amount = expandTo18Decimals(4);
-    await token0.transfer(pair.address, token0Amount);
-    await token1.transfer(pair.address, token1Amount);
-
-    const expectedLiquidity = expandTo18Decimals(2);
-    await expect(pair.mint(walletAddress))
-      .to.emit(pair, "Transfer")
-      .withArgs(AddressZero, AddressZero, MINIMUM_LIQUIDITY)
-      .to.emit(pair, "Transfer")
-      .withArgs(
-        AddressZero,
-        walletAddress,
-        expectedLiquidity.sub(MINIMUM_LIQUIDITY)
-      )
-      .to.emit(pair, "Sync")
-      .withArgs(token0Amount, token1Amount)
-      .to.emit(pair, "Mint")
-      .withArgs(walletAddress, token0Amount, token1Amount);
-
-    expect(await pair.totalSupply()).to.eq(expectedLiquidity);
-    expect(await pair.balanceOf(walletAddress)).to.eq(
-      expectedLiquidity.sub(MINIMUM_LIQUIDITY)
-    );
-    expect(await token0.balanceOf(pair.address)).to.eq(token0Amount);
-    expect(await token1.balanceOf(pair.address)).to.eq(token1Amount);
-    const reserves = await pair.getReserves();
-    expect(reserves[0]).to.eq(token0Amount);
-    expect(reserves[1]).to.eq(token1Amount);
+    sandglass = fixture.sandglass;
+    stakingToken = fixture.stakingToken;
+    privKey = await utils.genEdDSAPrivKey(pair.address, wallet);
+    pubKey = utils.privToPubKey(privKey);
+    await token0.approve(notePool.address, constants.MaxUint256);
+    await token1.approve(notePool.address, constants.MaxUint256);
+    await stakingToken.approve(sandglass.address, constants.MaxUint256);
   });
 
   async function addLiquidity(
@@ -87,293 +65,221 @@ describe("SnarkswapPair", () => {
       typeof n === "string" ? BigNumber.from(n) : expandTo18Decimals(n)
     )
   );
-  swapTestCases.forEach((swapTestCase, i) => {
-    it(`getInputPrice:${i}`, async () => {
-      const [
-        swapAmount,
-        token0Amount,
-        token1Amount,
-        expectedOutputAmount,
-      ] = swapTestCase;
-      const [_reserve0, _reserve1, _b] = await pair.getReserves();
-      await addLiquidity(token0Amount, token1Amount);
-      const [reserve0, reserve1, _] = await pair.getReserves();
-      await token0.transfer(pair.address, swapAmount);
-      await expect(
-        pair.swap(0, expectedOutputAmount.add(1), walletAddress, "0x")
-      ).to.be.revertedWith("UniswapV2: K");
-      // await pair.swap(BigNumber.from('1'), 0, walletAddress, '0x')
-      await pair.swap(0, BigNumber.from("1"), walletAddress, "0x");
+  describe("hide swap", () => {
+    swapTestCases.forEach((swapTestCase, i) => {
+      it(`getInputPrice:${i}`, async () => {
+        const [
+          swapAmount,
+          token0Amount,
+          token1Amount,
+          expectedOutputAmount,
+        ] = swapTestCase;
+        const note0: Note = {
+          address: token0.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        const note1: Note = {
+          address: token1.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        await addLiquidity(token0Amount, token1Amount);
+        const [reserve0, reserve1] = await pair.getReserves();
+        const snarkswap = await swap.hideSwap(
+          privKey,
+          reserve0,
+          reserve1,
+          note0,
+          note1,
+          token0.address,
+          token1.address,
+          swapAmount,
+          SwapType.Token0In,
+          { numerator: 3, denominator: 1000 },
+          10
+        );
+        const amountIn = [snarkswap.outputA, snarkswap.outputB]
+          .filter((note) => BigNumber.from(token0.address).eq(note.address))
+          .reduce((acc, note) => acc.add(note.amount), BigNumber.from(0))
+          .sub(note0.amount)
+          .mul(-1);
+        const amountOut = [snarkswap.outputA, snarkswap.outputB]
+          .filter((note) => BigNumber.from(token1.address).eq(note.address))
+          .reduce((acc, note) => acc.add(note.amount), BigNumber.from(0))
+          .sub(note1.amount);
+        expect(swapAmount).eq(amountIn);
+        expect(expectedOutputAmount).eq(amountOut);
+      });
     });
   });
-
-  const optimisticTestCases: BigNumber[][] = [
-    ["997000000000000000", 5, 10, 1], // given amountIn, amountOut = floor(amountIn * .997)
-    ["997000000000000000", 10, 5, 1],
-    ["997000000000000000", 5, 5, 1],
-    [1, 5, 5, "1003009027081243732"], // given amountOut, amountIn = ceiling(amountOut / .997)
-  ].map((a) =>
-    a.map((n) =>
-      typeof n === "string" ? BigNumber.from(n) : expandTo18Decimals(n)
-    )
-  );
-  optimisticTestCases.forEach((optimisticTestCase, i) => {
-    it(`optimistic:${i}`, async () => {
-      const [
-        outputAmount,
-        token0Amount,
-        token1Amount,
-        inputAmount,
-      ] = optimisticTestCase;
-      await addLiquidity(token0Amount, token1Amount);
-      await token0.transfer(pair.address, inputAmount);
-      await expect(
-        pair.swap(outputAmount.add(1), 0, walletAddress, "0x")
-      ).to.be.revertedWith("UniswapV2: K");
-      await pair.swap(outputAmount, 0, walletAddress, "0x");
+  describe("swapInTheDark()", () => {
+    swapTestCases.forEach((swapTestCase, i) => {
+      it(`swapInTheDark:${i}`, async () => {
+        const [
+          swapAmount,
+          token0Amount,
+          token1Amount,
+          expectedOutputAmount,
+        ] = swapTestCase;
+        const note0: Note = {
+          address: token0.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        const note1: Note = {
+          address: token1.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        await addLiquidity(token0Amount, token1Amount);
+        await notePool.deposit(
+          note0.address,
+          note0.amount,
+          note0.pubKey,
+          note0.salt
+        );
+        await notePool.deposit(
+          note1.address,
+          note1.amount,
+          note1.pubKey,
+          note1.salt
+        );
+        const [reserve0, reserve1] = await pair.getReserves();
+        const snarkswap = await swap.hideSwap(
+          privKey,
+          reserve0,
+          reserve1,
+          note0,
+          note1,
+          token0.address,
+          token1.address,
+          swapAmount,
+          SwapType.Token0In,
+          { numerator: 3, denominator: 1000 },
+          10
+        );
+        await expect(
+          pair.swapInTheDark(
+            getNoteHash(note0),
+            getNoteHash(note1),
+            snarkswap.hRatio,
+            snarkswap.hReserve0,
+            snarkswap.hReserve1,
+            snarkswap.mask,
+            getNoteHash(snarkswap.outputA),
+            getNoteHash(snarkswap.outputB),
+            snarkswap.salt,
+            snarkswap.encryptedOutputs,
+            snarkswap.proof
+          )
+        )
+          .to.emit(pair, "Darkened")
+          .withArgs(
+            snarkswap.darkness,
+            snarkswap.mask,
+            hexlify(snarkswap.encryptedOutputs)
+          );
+      });
     });
   });
-
-  it("swap:token0", async () => {
-    const token0Amount = expandTo18Decimals(5);
-    const token1Amount = expandTo18Decimals(10);
-    await addLiquidity(token0Amount, token1Amount);
-
-    const swapAmount = expandTo18Decimals(1);
-    const expectedOutputAmount = BigNumber.from("1662497915624478906");
-    await token0.transfer(pair.address, swapAmount);
-    await expect(pair.swap(0, expectedOutputAmount, walletAddress, "0x"))
-      .to.emit(token1, "Transfer")
-      .withArgs(pair.address, walletAddress, expectedOutputAmount)
-      .to.emit(pair, "Sync")
-      .withArgs(
-        token0Amount.add(swapAmount),
-        token1Amount.sub(expectedOutputAmount)
-      )
-      .to.emit(pair, "Swap")
-      .withArgs(
-        walletAddress,
-        swapAmount,
-        0,
-        0,
-        expectedOutputAmount,
-        walletAddress
-      );
-
-    const reserves = await pair.getReserves();
-    expect(reserves[0]).to.eq(token0Amount.add(swapAmount));
-    expect(reserves[1]).to.eq(token1Amount.sub(expectedOutputAmount));
-    expect(await token0.balanceOf(pair.address)).to.eq(
-      token0Amount.add(swapAmount)
-    );
-    expect(await token1.balanceOf(pair.address)).to.eq(
-      token1Amount.sub(expectedOutputAmount)
-    );
-    const totalSupplyToken0 = await token0.totalSupply();
-    const totalSupplyToken1 = await token1.totalSupply();
-    expect(await token0.balanceOf(walletAddress)).to.eq(
-      totalSupplyToken0.sub(token0Amount).sub(swapAmount)
-    );
-    expect(await token1.balanceOf(walletAddress)).to.eq(
-      totalSupplyToken1.sub(token1Amount).add(expectedOutputAmount)
-    );
-  });
-
-  it("swap:token1", async () => {
-    const token0Amount = expandTo18Decimals(5);
-    const token1Amount = expandTo18Decimals(10);
-    await addLiquidity(token0Amount, token1Amount);
-
-    const swapAmount = expandTo18Decimals(1);
-    const expectedOutputAmount = BigNumber.from("453305446940074565");
-    await token1.transfer(pair.address, swapAmount);
-    await expect(pair.swap(expectedOutputAmount, 0, walletAddress, "0x"))
-      .to.emit(token0, "Transfer")
-      .withArgs(pair.address, walletAddress, expectedOutputAmount)
-      .to.emit(pair, "Sync")
-      .withArgs(
-        token0Amount.sub(expectedOutputAmount),
-        token1Amount.add(swapAmount)
-      )
-      .to.emit(pair, "Swap")
-      .withArgs(
-        walletAddress,
-        0,
-        swapAmount,
-        expectedOutputAmount,
-        0,
-        walletAddress
-      );
-
-    const reserves = await pair.getReserves();
-    expect(reserves[0]).to.eq(token0Amount.sub(expectedOutputAmount));
-    expect(reserves[1]).to.eq(token1Amount.add(swapAmount));
-    expect(await token0.balanceOf(pair.address)).to.eq(
-      token0Amount.sub(expectedOutputAmount)
-    );
-    expect(await token1.balanceOf(pair.address)).to.eq(
-      token1Amount.add(swapAmount)
-    );
-    const totalSupplyToken0 = await token0.totalSupply();
-    const totalSupplyToken1 = await token1.totalSupply();
-    expect(await token0.balanceOf(walletAddress)).to.eq(
-      totalSupplyToken0.sub(token0Amount).add(expectedOutputAmount)
-    );
-    expect(await token1.balanceOf(walletAddress)).to.eq(
-      totalSupplyToken1.sub(token1Amount).sub(swapAmount)
-    );
-  });
-
-  it("swap:gas", async () => {
-    const token0Amount = expandTo18Decimals(5);
-    const token1Amount = expandTo18Decimals(10);
-    await addLiquidity(token0Amount, token1Amount);
-
-    // ensure that setting price{0,1}CumulativeLast for the first time doesn't affect our gas math
-    await mineBlock((await provider.getBlock("latest")).timestamp + 1);
-    await pair.sync();
-
-    const swapAmount = expandTo18Decimals(1);
-    const expectedOutputAmount = BigNumber.from("453305446940074565");
-    await token1.transfer(pair.address, swapAmount);
-    await mineBlock((await provider.getBlock("latest")).timestamp + 1);
-    const tx = await pair.swap(expectedOutputAmount, 0, walletAddress, "0x");
-    const receipt = await tx.wait();
-    expect(receipt.gasUsed).to.eq(77344);
-  });
-
-  it("burn", async () => {
-    const token0Amount = expandTo18Decimals(3);
-    const token1Amount = expandTo18Decimals(3);
-    await addLiquidity(token0Amount, token1Amount);
-
-    const expectedLiquidity = expandTo18Decimals(3);
-    await pair.transfer(pair.address, expectedLiquidity.sub(MINIMUM_LIQUIDITY));
-    await expect(pair.burn(walletAddress))
-      .to.emit(pair, "Transfer")
-      .withArgs(
-        pair.address,
-        AddressZero,
-        expectedLiquidity.sub(MINIMUM_LIQUIDITY)
-      )
-      .to.emit(token0, "Transfer")
-      .withArgs(pair.address, walletAddress, token0Amount.sub(1000))
-      .to.emit(token1, "Transfer")
-      .withArgs(pair.address, walletAddress, token1Amount.sub(1000))
-      .to.emit(pair, "Sync")
-      .withArgs(1000, 1000)
-      .to.emit(pair, "Burn")
-      .withArgs(
-        walletAddress,
-        token0Amount.sub(1000),
-        token1Amount.sub(1000),
-        walletAddress
-      );
-
-    expect(await pair.balanceOf(walletAddress)).to.eq(0);
-    expect(await pair.totalSupply()).to.eq(MINIMUM_LIQUIDITY);
-    expect(await token0.balanceOf(pair.address)).to.eq(1000);
-    expect(await token1.balanceOf(pair.address)).to.eq(1000);
-    const totalSupplyToken0 = await token0.totalSupply();
-    const totalSupplyToken1 = await token1.totalSupply();
-    expect(await token0.balanceOf(walletAddress)).to.eq(
-      totalSupplyToken0.sub(1000)
-    );
-    expect(await token1.balanceOf(walletAddress)).to.eq(
-      totalSupplyToken1.sub(1000)
-    );
-  });
-
-  it("price{0,1}CumulativeLast", async () => {
-    const token0Amount = expandTo18Decimals(3);
-    const token1Amount = expandTo18Decimals(3);
-    await addLiquidity(token0Amount, token1Amount);
-
-    const blockTimestamp = (await pair.getReserves())[2];
-    await mineBlock(blockTimestamp + 1);
-    await pair.sync();
-    const initialPrice = encodePrice(token0Amount, token1Amount);
-    const updatedTimestamp = (await pair.getReserves())[2];
-    expect(await pair.price0CumulativeLast()).to.eq(
-      initialPrice[0].mul(updatedTimestamp - blockTimestamp)
-    );
-    expect(await pair.price1CumulativeLast()).to.eq(
-      initialPrice[1].mul(updatedTimestamp - blockTimestamp)
-    );
-
-    const swapAmount = expandTo18Decimals(3);
-    await token0.transfer(pair.address, swapAmount);
-    await mineBlock(blockTimestamp + 10);
-    // swap to a new price eagerly instead of syncing
-    await pair.swap(0, expandTo18Decimals(1), walletAddress, "0x"); // make the price nice
-
-    const updatedTimestamp2 = (await pair.getReserves())[2];
-    expect(await pair.price0CumulativeLast()).to.eq(
-      initialPrice[0].mul(updatedTimestamp2 - blockTimestamp)
-    );
-    expect(await pair.price1CumulativeLast()).to.eq(
-      initialPrice[1].mul(updatedTimestamp2 - blockTimestamp)
-    );
-
-    await mineBlock(blockTimestamp + 20);
-    await pair.sync();
-
-    const newPrice = encodePrice(expandTo18Decimals(6), expandTo18Decimals(2));
-    expect(await pair.price0CumulativeLast()).to.eq(
-      initialPrice[0]
-        .mul(updatedTimestamp2 - blockTimestamp)
-        .add(newPrice[0].mul(10))
-    );
-    expect(await pair.price1CumulativeLast()).to.eq(
-      initialPrice[1]
-        .mul(updatedTimestamp2 - blockTimestamp)
-        .add(newPrice[1].mul(10))
-    );
-  });
-
-  it("feeTo:off", async () => {
-    const token0Amount = expandTo18Decimals(1000);
-    const token1Amount = expandTo18Decimals(1000);
-    await addLiquidity(token0Amount, token1Amount);
-
-    const swapAmount = expandTo18Decimals(1);
-    const expectedOutputAmount = BigNumber.from("996006981039903216");
-    await token1.transfer(pair.address, swapAmount);
-    await pair.swap(expectedOutputAmount, 0, walletAddress, "0x");
-
-    const expectedLiquidity = expandTo18Decimals(1000);
-    await pair.transfer(pair.address, expectedLiquidity.sub(MINIMUM_LIQUIDITY));
-    await pair.burn(walletAddress);
-    expect(await pair.totalSupply()).to.eq(MINIMUM_LIQUIDITY);
-  });
-
-  it("feeTo:on", async () => {
-    await factory.setFeeTo(otherAddress);
-
-    const token0Amount = expandTo18Decimals(1000);
-    const token1Amount = expandTo18Decimals(1000);
-    await addLiquidity(token0Amount, token1Amount);
-
-    const swapAmount = expandTo18Decimals(1);
-    const expectedOutputAmount = BigNumber.from("996006981039903216");
-    await token1.transfer(pair.address, swapAmount);
-    await pair.swap(expectedOutputAmount, 0, walletAddress, "0x");
-
-    const expectedLiquidity = expandTo18Decimals(1000);
-    await pair.transfer(pair.address, expectedLiquidity.sub(MINIMUM_LIQUIDITY));
-    await pair.burn(walletAddress);
-    expect(await pair.totalSupply()).to.eq(
-      MINIMUM_LIQUIDITY.add("249750499251388")
-    );
-    expect(await pair.balanceOf(otherAddress)).to.eq("249750499251388");
-
-    // using 1000 here instead of the symbolic MINIMUM_LIQUIDITY because the amounts only happen to be equal...
-    // ...because the initial liquidity amounts were equal
-    expect(await token0.balanceOf(pair.address)).to.eq(
-      BigNumber.from(1000).add("249501683697445")
-    );
-    expect(await token1.balanceOf(pair.address)).to.eq(
-      BigNumber.from(1000).add("250000187312969")
-    );
+  describe("undarken()", () => {
+    swapTestCases.forEach((swapTestCase, i) => {
+      it(`undarken:${i}`, async () => {
+        const [
+          swapAmount,
+          token0Amount,
+          token1Amount,
+          expectedOutputAmount,
+        ] = swapTestCase;
+        const note0: Note = {
+          address: token0.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        const note1: Note = {
+          address: token1.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        await addLiquidity(token0Amount, token1Amount);
+        await notePool.deposit(
+          note0.address,
+          note0.amount,
+          note0.pubKey,
+          note0.salt
+        );
+        await notePool.deposit(
+          note1.address,
+          note1.amount,
+          note1.pubKey,
+          note1.salt
+        );
+        const [reserve0, reserve1] = await pair.getReserves();
+        const snarkswap = await swap.hideSwap(
+          privKey,
+          reserve0,
+          reserve1,
+          note0,
+          note1,
+          token0.address,
+          token1.address,
+          swapAmount,
+          SwapType.Token0In,
+          { numerator: 3, denominator: 1000 },
+          10
+        );
+        const {
+          darkness,
+          hRatio,
+          hReserve0,
+          hReserve1,
+          mask,
+          salt,
+        } = snarkswap;
+        await pair
+          .connect(wallet)
+          .swapInTheDark(
+            getNoteHash(note0),
+            getNoteHash(note1),
+            hRatio,
+            hReserve0,
+            hReserve1,
+            mask,
+            getNoteHash(snarkswap.outputA),
+            getNoteHash(snarkswap.outputB),
+            salt,
+            snarkswap.encryptedOutputs,
+            snarkswap.proof
+          );
+        const hunt = await pow.solve(
+          darkness,
+          hReserve0,
+          hReserve1,
+          mask,
+          salt
+        );
+        await expect(
+          pair
+            .connect(wallet)
+            .undarken(
+              hunt.reserve0,
+              hunt.reserve1,
+              hReserve0,
+              hReserve1,
+              mask,
+              salt
+            )
+        )
+          .to.emit(pair, "Undarkened")
+          .withArgs(darkness, hunt.reserve0, hunt.reserve1);
+      });
+    });
   });
 });

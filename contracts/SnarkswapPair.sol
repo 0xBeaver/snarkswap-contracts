@@ -18,23 +18,28 @@ import {Proof} from "./libraries/Verifier.sol";
 import {SwapVerifier} from "./verifiers/SwapVerifier.sol";
 import {ISwapVerifier, SnarkSwap} from "./interfaces/ISwapVerifier.sol";
 import {IUndarkener} from "./interfaces/IUndarkener.sol";
-import {PairConfig} from "./interfaces/ISnarkswapPair.sol";
+
+struct PairConfig {
+    address sandglass;
+    address undarkener;
+    address swapVerifier;
+    address notePool;
+}
 
 contract SnarkswapPair is UniswapV2Pair {
     using SafeERC20 for IERC20;
     using SafeMath for uint256;
 
     bytes32 public darkness;
-    address public darkener;
     uint256 public darkenedAt;
 
     PairConfig public config;
 
     uint256 private constant MAX_DIFFICULTY = 30; // estimated: 9 hours
-    uint8 private constant FEE_NUMERATOR = 3; // 
+    uint8 private constant FEE_NUMERATOR = 3; //
     uint16 private constant FEE_DENOMINATOR = 1000; //
 
-    event Darkened(bytes32 darkness, uint224 mask);
+    event Darkened(bytes32 darkness, uint224 mask, bytes encryptedOutputs);
     event Undarkened(bytes32 darkness, uint112 reserve0, uint112 reserve1);
 
     modifier notInTheDark() {
@@ -62,35 +67,37 @@ contract SnarkswapPair is UniswapV2Pair {
         uint256 outputA,
         uint256 outputB,
         uint128 salt,
+        bytes memory encryptedOutputs, // used to decrypte the output note details
         Proof calldata proof
     ) public notInTheDark {
-        (uint112 reserve0, uint112 reserve1, ) = getReserves();
-        // Given public inputs and private inputs satisfy the darkening protocol.
-        // See circuits/darkening.circom for more details.
-        // this consumes about 300k gas.
-        require(
-            ISwapVerifier(config.swapVerifier).verifySwap(
-                SnarkSwap(
-                    sourceA,
-                    sourceB,
-                    reserve0,
-                    reserve1,
-                    mask,
-                    hRatio,
-                    hReserve0,
-                    hReserve1,
-                    salt,
-                    outputA,
-                    outputB,
-                    token0,
-                    token1,
-                    FEE_NUMERATOR,
-                    FEE_DENOMINATOR
+        {
+            // Given public inputs and private inputs satisfy the darkening protocol.
+            // See circuits/darkening.circom for more details.
+            // this consumes about 300k gas.
+            require(
+                ISwapVerifier(config.swapVerifier).verifySwap(
+                    SnarkSwap(
+                        sourceA,
+                        sourceB,
+                        reserve0,
+                        reserve1,
+                        mask,
+                        hRatio,
+                        hReserve0,
+                        hReserve1,
+                        salt,
+                        outputA,
+                        outputB,
+                        token0,
+                        token1,
+                        FEE_NUMERATOR,
+                        FEE_DENOMINATOR
+                    ),
+                    proof
                 ),
-                proof
-            ),
-            "zk fails"
-        );
+                "zk fails"
+            );
+        }
         // It records the darkness and the swap ratio goes into the dark. Can't run in front in the dark!
         darkness = keccak256(
             abi.encodePacked(hRatio, hReserve0, hReserve1, mask)
@@ -112,7 +119,7 @@ contract SnarkswapPair is UniswapV2Pair {
                 outputB
             );
         }
-        emit Darkened(darkness, mask);
+        emit Darkened(darkness, mask, encryptedOutputs);
     }
 
     /**

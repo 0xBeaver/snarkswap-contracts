@@ -3,35 +3,38 @@ import { ethers } from "hardhat";
 import { Contract, constants, BigNumber, Signer } from "ethers";
 import { solidity } from "ethereum-waffle";
 
-import { getCreate2Address } from "./shared/utilities";
-import { factoryFixture } from "./shared/fixtures";
+import { expandTo18Decimals, getCreate2Address } from "../shared/utilities";
+import { factoryFixture } from "../shared/fixtures";
 
 chai.use(solidity);
-
-const TEST_ADDRESSES: [string, string] = [
-  "0x1000000000000000000000000000000000000000",
-  "0x2000000000000000000000000000000000000000",
-];
 
 const { AddressZero } = constants;
 
 const provider = ethers.provider;
 
-describe("SnarkswapFactory", async () => {
+describe("Uniswap compatibility: SnarkswapFactory", async () => {
   let wallet: Signer, other: Signer;
   let walletAddress: string;
   let otherAddress: string;
   let factory: Contract;
   let undarkener: Contract;
   let hRatioHash: Contract;
+  let TEST_ADDRESSES: [string, string];
   beforeEach(async () => {
     [wallet, other] = await ethers.getSigners();
     walletAddress = await wallet.getAddress();
     otherAddress = await other.getAddress();
     const fixture = await factoryFixture(wallet);
+    const ERC20Tester = await ethers.getContractFactory("ERC20Tester");
+    const tokenA = await ERC20Tester.deploy(expandTo18Decimals(10000));
+    const tokenB = await ERC20Tester.deploy(expandTo18Decimals(10000));
     factory = fixture.factory;
     undarkener = fixture.factory;
     hRatioHash = fixture.factory;
+    TEST_ADDRESSES = [tokenA.address, tokenB.address].sort() as [
+      string,
+      string
+    ];
   });
 
   it("feeTo, feeToSetter, allPairsLength", async () => {
@@ -86,7 +89,7 @@ describe("SnarkswapFactory", async () => {
   it("createPair:gas", async () => {
     const tx = await factory.createPair(...TEST_ADDRESSES);
     const receipt = await tx.wait();
-    expect(receipt.gasUsed).to.eq(3976795);
+    expect(receipt.gasUsed).to.eq(4031921);
   });
 
   it("setFeeTo", async () => {

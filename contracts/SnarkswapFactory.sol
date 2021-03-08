@@ -5,6 +5,7 @@ import {
     UniswapV2Factory
 } from "@0xBeaver/uniswap-v2-core/contracts/UniswapV2Factory.sol";
 import {ISnarkswapPair} from "./interfaces/ISnarkswapPair.sol";
+import {INotePool} from "./interfaces/INotePool.sol";
 import {SnarkswapPair} from "./SnarkswapPair.sol";
 import {PairConfig} from "./interfaces/ISnarkswapPair.sol";
 
@@ -44,6 +45,7 @@ contract SnarkswapFactory is UniswapV2Factory {
         }
         ISnarkswapPair(pair).initialize(token0, token1);
         ISnarkswapPair(pair).initialize2(pairConfig);
+        INotePool(pairConfig.notePool).approvePair(token0, token1, pair);
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair; // populate mapping in the reverse direction
         allPairs.push(pair);

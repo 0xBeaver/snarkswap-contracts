@@ -95,7 +95,7 @@ export async function factoryFixture(signer: Signer): Promise<FactoryFixture> {
   await sandglass.initialize(
     factory.address,
     fixture.stakingToken.address,
-    10,
+    10000,
     30,
     20,
     600

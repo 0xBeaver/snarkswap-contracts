@@ -1,7 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-pragma solidity >= 0.8.0;
+pragma solidity >=0.8.0;
 
 interface INotePool {
     // only for SnarkswapPair.sol
-    function update(uint256 sourceX, uint256 sourceY, uint256 outputX, uint256 outputY) external;
+    function update(
+        uint256 sourceX,
+        uint256 sourceY,
+        uint256 outputX,
+        uint256 outputY
+    ) external;
+
+    // only for SnarkswapFactory.sol
+    function approvePair(
+        address token0,
+        address token1,
+        address pair
+    ) external;
 }

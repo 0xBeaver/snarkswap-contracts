@@ -36,8 +36,7 @@ contract Sandglass is ControlledByPair {
 
     ImmutableConfig public config;
 
-    constructor() {
-    }
+    constructor() {}
 
     function initialize(
         address factory,
@@ -73,30 +72,36 @@ contract Sandglass is ControlledByPair {
         address pair = msg.sender;
         Staking storage staking = stakings[pair][darkness];
         require(staking.darkener == address(0), "already darkened");
-        // Staking amount is proportional to the difficulty. Free difficulty is 20
-        uint256 amount =
-            config.difficultyPrice *
-                (10**(config.maxDifficulty - difficulty + 18));
-        // It doesn't need safe math. no overflow here.
-
-        IERC20(config.stakingToken).safeTransferFrom(
-            darkener,
-            address(this),
-            staking.amount
+        require(
+            darkener != address(0),
+            "darkener should not be the zero address"
         );
+        // Staking amount is proportional to the difficulty. Free difficulty is 20
+        uint256 amount = config.difficultyPrice * (10**difficulty);
         // Take fee if the darkening is too difficult.
         uint256 fee =
             difficulty > config.freeDifficulty
                 ? amount.mul(difficulty - config.freeDifficulty).mul(3).div(100)
                 : 0;
-        IERC20(config.stakingToken).safeTransfer(
-            ISnarkswapFactory(config.factory).feeTo(),
-            fee
-        );
         // Record the staking.
         staking.darkener = darkener;
         staking.darkenedAt = block.timestamp;
         staking.amount = amount.sub(fee);
+        // It doesn't need safe math. no overflow here.
+        IERC20(config.stakingToken).safeTransferFrom(
+            darkener,
+            address(this),
+            amount
+        );
+        if (fee > 0) {
+            address feeTo = ISnarkswapFactory(config.factory).feeTo();
+            if (feeTo != address(0)) {
+                IERC20(config.stakingToken).safeTransfer(
+                    ISnarkswapFactory(config.factory).feeTo(),
+                    fee
+                );
+            }
+        }
     }
 
     function resolve(address solver, bytes32 darkness)
@@ -107,26 +112,35 @@ contract Sandglass is ControlledByPair {
         Staking storage staking = stakings[pair][darkness];
         staking.solver = solver;
         if (staking.solver == staking.darkener) {
-            unstake(pair, darkness);
+            _unstake(solver, pair, darkness);
+        } else if (
+            block.timestamp - staking.darkenedAt > config.preferentialPeriod
+        ) {
+            _unstake(solver, pair, darkness);
         }
     }
 
     function unstake(address pair, bytes32 darkness) public {
+        _unstake(msg.sender, pair, darkness);
+    }
+
+    function _unstake(
+        address solver,
+        address pair,
+        bytes32 darkness
+    ) internal {
         Staking storage staking = stakings[pair][darkness];
         require(staking.solver != address(0), "Still dark");
-        if (block.timestamp - staking.darkenedAt < config.preferentialPeriod) {
+        if (block.timestamp - staking.darkenedAt <= config.preferentialPeriod) {
             // The trader has 10 minutes advantage to withdraw the staking.
             require(
-                msg.sender == staking.darkener,
+                solver == staking.darkener,
                 "Only the darkener can withdraw"
             );
         } else {
-            require(
-                msg.sender == staking.solver,
-                "Only the solver can withdraw"
-            );
+            require(solver == staking.solver, "Only the solver can withdraw");
         }
-        IERC20(config.stakingToken).safeTransfer(msg.sender, staking.amount);
+        IERC20(config.stakingToken).safeTransfer(solver, staking.amount);
         delete stakings[pair][darkness];
     }
 }
