@@ -39,8 +39,9 @@ contract SnarkswapPair is UniswapV2Pair {
     uint8 private constant FEE_NUMERATOR = 3; //
     uint16 private constant FEE_DENOMINATOR = 1000; //
 
-    event Darkened(bytes32 darkness, uint224 mask, bytes encryptedOutputs);
+    event Darkened(bytes32 darkness, uint224 mask);
     event Undarkened(bytes32 darkness, uint112 reserve0, uint112 reserve1);
+    event Outputs(address indexed darkener, bytes encryptedOutputs);
 
     modifier notInTheDark() {
         require(darkness == bytes32(0), "too dark");
@@ -112,14 +113,16 @@ contract SnarkswapPair is UniswapV2Pair {
                 darkness
             );
             // Consumes sourceA & sourceB. But doesn't know the detail of outputA and outputB
-            INotePool(config.notePool).update(
+            INotePool(config.notePool).transact(
+                msg.sender,
                 sourceA,
                 sourceB,
                 outputA,
-                outputB
+                outputB,
+                encryptedOutputs
             );
         }
-        emit Darkened(darkness, mask, encryptedOutputs);
+        emit Darkened(darkness, mask);
     }
 
     /**

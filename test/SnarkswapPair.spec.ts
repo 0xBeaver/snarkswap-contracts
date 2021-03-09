@@ -1,18 +1,13 @@
 import { ethers, waffle } from "hardhat";
 import chai, { expect } from "chai";
+import { decrypt } from "chacha20";
 import { Contract, constants, BigNumber, Signer } from "ethers";
-import {
-  parseEther,
-  randomBytes,
-  hexlify,
-  formatEther,
-} from "ethers/lib/utils";
+import { parseEther, randomBytes, hexlify } from "ethers/lib/utils";
 import { utils, Note, getNoteHash, swap, pow, eddsa } from "@snarkswap/client";
 
 import { expandTo18Decimals } from "./shared/utilities";
 import { pairFixture } from "./shared/fixtures";
 import { SwapType } from "@snarkswap/client/build/main/lib/swap";
-import { getAmountOut } from "@snarkswap/client/build/main/lib/utils";
 
 chai.use(waffle.solidity);
 
@@ -185,9 +180,15 @@ describe("SnarkswapPair", () => {
           )
         )
           .to.emit(pair, "Darkened")
+          .withArgs(snarkswap.darkness, snarkswap.mask)
+          .to.emit(notePool, "Transact")
           .withArgs(
-            snarkswap.darkness,
-            snarkswap.mask,
+            walletAddress,
+            pair.address,
+            getNoteHash(note0),
+            getNoteHash(note1),
+            getNoteHash(snarkswap.outputA),
+            getNoteHash(snarkswap.outputB),
             hexlify(snarkswap.encryptedOutputs)
           );
         await expect(
@@ -398,6 +399,128 @@ describe("SnarkswapPair", () => {
         ];
         expect(swapAmount).eq(initialBalance0.sub(finalBalance0));
         expect(expectedOutputAmount).eq(finalBalance1.sub(initialBalance1));
+      });
+    });
+  });
+  describe("decryption()", () => {
+    swapTestCases.forEach((swapTestCase, i) => {
+      it(`decryption:${i}`, async () => {
+        const [
+          swapAmount,
+          token0Amount,
+          token1Amount,
+          expectedOutputAmount,
+        ] = swapTestCase;
+        const note0: Note = {
+          address: token0.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        const note1: Note = {
+          address: token1.address,
+          amount: parseEther("3"),
+          pubKey,
+          salt: BigNumber.from(randomBytes(16)),
+        };
+        await addLiquidity(token0Amount, token1Amount);
+        const [initialBalance0, initialBalance1] = [
+          await token0.balanceOf(walletAddress),
+          await token1.balanceOf(walletAddress),
+        ];
+        await notePool.deposit(
+          note0.address,
+          note0.amount,
+          note0.pubKey,
+          note0.salt
+        );
+        await notePool.deposit(
+          note1.address,
+          note1.amount,
+          note1.pubKey,
+          note1.salt
+        );
+        const [initialNotePoolBalance0, initialNotePoolBalance1] = [
+          await token0.balanceOf(notePool.address),
+          await token1.balanceOf(notePool.address),
+        ];
+        const [reserve0, reserve1] = [token0Amount, token1Amount];
+        const snarkswap = await swap.hideSwap(
+          privKey,
+          reserve0,
+          reserve1,
+          note0,
+          note1,
+          token0.address,
+          token1.address,
+          swapAmount,
+          SwapType.Token0In,
+          { numerator: 3, denominator: 1000 },
+          10
+        );
+        const fromBlock = await provider.getBlockNumber();
+        const { hRatio, hReserve0, hReserve1, mask, salt } = snarkswap;
+        await pair
+          .connect(wallet)
+          .swapInTheDark(
+            getNoteHash(note0),
+            getNoteHash(note1),
+            hRatio,
+            hReserve0,
+            hReserve1,
+            mask,
+            getNoteHash(snarkswap.outputA),
+            getNoteHash(snarkswap.outputB),
+            salt,
+            snarkswap.encryptedOutputs,
+            snarkswap.proof
+          );
+        const toBlock = await provider.getBlockNumber();
+        const logs = await provider.getLogs({
+          address: notePool.address,
+          topics: [
+            ethers.utils.id(
+              "Transact(address,address,uint256,uint256,uint256,uint256,bytes)"
+            ),
+          ],
+          fromBlock,
+          toBlock,
+        });
+        let abi = [
+          "event Transact(address indexed swapper, address indexed pair, uint256 sourceA, uint256 sourceB, uint256 outputA, uint256 outputB, bytes hint)",
+        ];
+        let iface = new ethers.utils.Interface(abi);
+        logs.map((log) => {
+          const parsed = iface.parseLog(log);
+          const outputA = parsed.args[4];
+          const outputB = parsed.args[5];
+          const encrypted = parsed.args[6];
+          const [output0, output1] = utils.decryptTransaction(
+            privKey,
+            outputA,
+            outputB,
+            token0.address,
+            token1.address,
+            encrypted
+          );
+          expect(
+            [snarkswap.outputA, snarkswap.outputB]
+              .sort((a, b) =>
+                BigNumber.from(a.address).sub(b.address).gt(0) ? 1 : -1
+              )
+              .map((note) => getNoteHash(note).toHexString())
+              .sort()
+              .join("")
+          ).eq(
+            [output0, output1]
+              .sort((a, b) =>
+                BigNumber.from(a.address).sub(b.address).gt(0) ? 1 : -1
+              )
+              .map((note) => getNoteHash(note).toHexString())
+              .sort()
+              .join("")
+          );
+        });
       });
     });
   });

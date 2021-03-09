@@ -3,11 +3,13 @@ pragma solidity >=0.8.0;
 
 interface INotePool {
     // only for SnarkswapPair.sol
-    function update(
-        uint256 sourceX,
-        uint256 sourceY,
-        uint256 outputX,
-        uint256 outputY
+    function transact(
+        address spender,
+        uint256 sourceA,
+        uint256 sourceB,
+        uint256 outputA,
+        uint256 outputB,
+        bytes calldata encrypted
     ) external;
 
     // only for SnarkswapFactory.sol

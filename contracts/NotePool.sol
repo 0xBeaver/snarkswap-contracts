@@ -40,6 +40,15 @@ contract NotePool is ControlledByPair {
         bytes32 eddsaId,
         uint128 salt
     );
+    event Transact(
+        address indexed swapper,
+        address indexed pair,
+        uint256 sourceA,
+        uint256 sourceB,
+        uint256 outputA,
+        uint256 outputB,
+        bytes hint
+    );
 
     constructor() {}
 
@@ -71,18 +80,29 @@ contract NotePool is ControlledByPair {
         );
     }
 
-    function update(
-        uint256 sourceX,
-        uint256 sourceY,
-        uint256 outputX,
-        uint256 outputY
+    function transact(
+        address spender,
+        uint256 sourceA,
+        uint256 sourceB,
+        uint256 outputA,
+        uint256 outputB,
+        bytes memory encrypted
     ) public onlySnarkswapPair(config.factory) {
-        require(notes[sourceX] && notes[sourceY], "note does not exist");
-        delete notes[sourceX];
-        delete notes[sourceY];
-        require(!notes[outputX] && !notes[outputY], "output already exists");
-        notes[outputX] = true;
-        notes[outputY] = true;
+        require(notes[sourceA] && notes[sourceB], "note does not exist");
+        delete notes[sourceA];
+        delete notes[sourceB];
+        require(!notes[outputA] && !notes[outputB], "output already exists");
+        notes[outputA] = true;
+        notes[outputB] = true;
+        emit Transact(
+            spender,
+            msg.sender,
+            sourceA,
+            sourceB,
+            outputA,
+            outputB,
+            encrypted
+        );
     }
 
     function deposit(
