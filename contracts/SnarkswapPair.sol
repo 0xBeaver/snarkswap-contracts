@@ -164,12 +164,10 @@ contract SnarkswapPair is UniswapV2Pair {
                 ? uint256(0)
                 : uint256(_reserve1).sub(uint256(reserve1));
         require(amount0Out == 0 || amount1Out == 0, "one should be zero");
-        uint256 amountInWithFee =
+        uint256 amountIn =
             inputToken == token0
                 ? uint256(reserve0).sub(uint256(_reserve0))
                 : uint256(reserve1).sub(uint256(_reserve1));
-        uint256 amountIn = amountInWithFee.mul(1000).div(997);
-        // Run the pending swap.
         IERC20(inputToken).safeTransferFrom(
             config.notePool,
             address(this),

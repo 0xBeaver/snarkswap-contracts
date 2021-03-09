@@ -1,12 +1,18 @@
 import { ethers, waffle } from "hardhat";
 import chai, { expect } from "chai";
 import { Contract, constants, BigNumber, Signer } from "ethers";
-import { parseEther, randomBytes, hexlify } from "ethers/lib/utils";
-import { utils, Note, getNoteHash, swap, pow } from "@snarkswap/client";
+import {
+  parseEther,
+  randomBytes,
+  hexlify,
+  formatEther,
+} from "ethers/lib/utils";
+import { utils, Note, getNoteHash, swap, pow, eddsa } from "@snarkswap/client";
 
 import { expandTo18Decimals } from "./shared/utilities";
 import { pairFixture } from "./shared/fixtures";
 import { SwapType } from "@snarkswap/client/build/main/lib/swap";
+import { getAmountOut } from "@snarkswap/client/build/main/lib/utils";
 
 chai.use(waffle.solidity);
 
@@ -184,6 +190,70 @@ describe("SnarkswapPair", () => {
             snarkswap.mask,
             hexlify(snarkswap.encryptedOutputs)
           );
+        await expect(
+          notePool.withdraw(
+            note0.address,
+            note0.amount,
+            note0.pubKey,
+            note0.salt,
+            walletAddress,
+            await eddsa.signWithdrawal(
+              getNoteHash(note0),
+              walletAddress,
+              privKey
+            )
+          )
+        ).to.be.revertedWith("Note doesn't exist");
+        await expect(
+          notePool.withdraw(
+            note1.address,
+            note1.amount,
+            note1.pubKey,
+            note1.salt,
+            walletAddress,
+            await eddsa.signWithdrawal(
+              getNoteHash(note1),
+              walletAddress,
+              privKey
+            )
+          )
+        ).to.be.revertedWith("Note doesn't exist");
+        const output0 = BigNumber.from(snarkswap.outputA.address).eq(
+          token0.address
+        )
+          ? snarkswap.outputA
+          : snarkswap.outputB;
+        const output1 = BigNumber.from(snarkswap.outputA.address).eq(
+          token1.address
+        )
+          ? snarkswap.outputA
+          : snarkswap.outputB;
+        await notePool.withdraw(
+          output0.address,
+          output0.amount,
+          output0.pubKey,
+          output0.salt,
+          walletAddress,
+          await eddsa.signWithdrawal(
+            getNoteHash(output0),
+            walletAddress,
+            privKey
+          )
+        );
+        await expect(
+          notePool.withdraw(
+            output1.address,
+            output1.amount,
+            output1.pubKey,
+            output1.salt,
+            walletAddress,
+            await eddsa.signWithdrawal(
+              getNoteHash(output1),
+              walletAddress,
+              privKey
+            )
+          )
+        ).to.be.revertedWith("Not enough balance. Undarken first");
       });
     });
   });
@@ -209,6 +279,10 @@ describe("SnarkswapPair", () => {
           salt: BigNumber.from(randomBytes(16)),
         };
         await addLiquidity(token0Amount, token1Amount);
+        const [initialBalance0, initialBalance1] = [
+          await token0.balanceOf(walletAddress),
+          await token1.balanceOf(walletAddress),
+        ];
         await notePool.deposit(
           note0.address,
           note0.amount,
@@ -221,7 +295,11 @@ describe("SnarkswapPair", () => {
           note1.pubKey,
           note1.salt
         );
-        const [reserve0, reserve1] = await pair.getReserves();
+        const [initialNotePoolBalance0, initialNotePoolBalance1] = [
+          await token0.balanceOf(notePool.address),
+          await token1.balanceOf(notePool.address),
+        ];
+        const [reserve0, reserve1] = [token0Amount, token1Amount];
         const snarkswap = await swap.hideSwap(
           privKey,
           reserve0,
@@ -279,6 +357,47 @@ describe("SnarkswapPair", () => {
         )
           .to.emit(pair, "Undarkened")
           .withArgs(darkness, hunt.reserve0, hunt.reserve1);
+
+        const [finalNotePoolBalance0, finalNotePoolBalance1] = [
+          await token0.balanceOf(notePool.address),
+          await token1.balanceOf(notePool.address),
+        ];
+        expect(finalNotePoolBalance0).eq(
+          initialNotePoolBalance0.sub(swapAmount)
+        );
+        expect(finalNotePoolBalance1).eq(
+          initialNotePoolBalance1.add(expectedOutputAmount)
+        );
+        await notePool.withdraw(
+          snarkswap.outputA.address,
+          snarkswap.outputA.amount,
+          snarkswap.outputA.pubKey,
+          snarkswap.outputA.salt,
+          walletAddress,
+          await eddsa.signWithdrawal(
+            getNoteHash(snarkswap.outputA),
+            walletAddress,
+            privKey
+          )
+        );
+        await notePool.withdraw(
+          snarkswap.outputB.address,
+          snarkswap.outputB.amount,
+          snarkswap.outputB.pubKey,
+          snarkswap.outputB.salt,
+          walletAddress,
+          await eddsa.signWithdrawal(
+            getNoteHash(snarkswap.outputB),
+            walletAddress,
+            privKey
+          )
+        );
+        const [finalBalance0, finalBalance1] = [
+          await token0.balanceOf(walletAddress),
+          await token1.balanceOf(walletAddress),
+        ];
+        expect(swapAmount).eq(initialBalance0.sub(finalBalance0));
+        expect(expectedOutputAmount).eq(finalBalance1.sub(initialBalance1));
       });
     });
   });

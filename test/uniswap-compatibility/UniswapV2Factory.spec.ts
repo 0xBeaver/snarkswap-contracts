@@ -89,7 +89,7 @@ describe("Uniswap compatibility: SnarkswapFactory", async () => {
   it("createPair:gas", async () => {
     const tx = await factory.createPair(...TEST_ADDRESSES);
     const receipt = await tx.wait();
-    expect(receipt.gasUsed).to.eq(4031921);
+    expect(receipt.gasUsed).to.eq(4021278);
   });
 
   it("setFeeTo", async () => {

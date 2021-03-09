@@ -61,8 +61,14 @@ contract NotePool is ControlledByPair {
             msg.sender == config.factory,
             "only factory created pool allowed"
         );
-        IERC20(token0).approve(pair, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
-        IERC20(token1).approve(pair, 0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff);
+        IERC20(token0).approve(
+            pair,
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        );
+        IERC20(token1).approve(
+            pair,
+            0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+        );
     }
 
     function update(
@@ -135,6 +141,9 @@ contract NotePool is ControlledByPair {
             ),
             "Invalid EdDSA signature"
         );
+        if (IERC20(token).balanceOf(address(this)) < amount) {
+            revert("Not enough balance. Undarken first");
+        }
         IERC20(token).safeTransfer(to, amount);
         bytes32 eddsaId =
             keccak256(abi.encodePacked(edDSAPubKey[0], edDSAPubKey[1]));
