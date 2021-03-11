@@ -1,5 +1,6 @@
 import { task } from "hardhat/config";
 import "@nomiclabs/hardhat-waffle";
+import "hardhat-gas-reporter";
 
 require("dotenv").config();
 
